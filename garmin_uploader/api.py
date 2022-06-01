@@ -1,4 +1,5 @@
 import requests
+import cloudscraper
 
 import re
 from garmin_uploader import logger
@@ -41,10 +42,8 @@ class GarminAPI:
         """
         # Use a valid Browser user agent
         # TODO: use several UA picked randomly
-        session = requests.Session()
-        session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:48.0) Gecko/20100101 Firefox/50.0',  # noqa
-        })
+        # Use Cloudscraper to avoid cloudflare spam detection
+        session = cloudscraper.create_scraper()
 
         # Request sso hostname
         sso_hostname = None
@@ -52,6 +51,8 @@ class GarminAPI:
         if not resp.ok:
             raise Exception('Invalid SSO first request status code {}'.format(resp.status_code))  # noqa
         sso_hostname = resp.json().get('host')
+
+        logger.debug('sso_hostname -> {}'.format(sso_hostname))
 
         # Load login page to get login ticket
         # Full parameters from Firebug, we have to maintain
@@ -63,10 +64,10 @@ class GarminAPI:
             ('source', 'https://connect.garmin.com/signin/'),
             ('redirectAfterAccountLoginUrl', 'https://connect.garmin.com/modern/'),  # noqa
             ('redirectAfterAccountCreationUrl', 'https://connect.garmin.com/modern/'),  # noqa
-            ('gauthHost', sso_hostname),
+            ('gauthHost', 'https://sso.garmin.com/sso'),
             ('locale', 'fr_FR'),
             ('id', 'gauth-widget'),
-            ('cssUrl', 'https://connect.garmin.com/gauth-custom-v3.2-min.css'),
+            ('cssUrl', 'https://connect.garmin.com/gauth-custom-v1.2-min.css'),
             ('privacyStatementUrl', 'https://www.garmin.com/fr-FR/privacy/connect/'),  # noqa
             ('clientId', 'GarminConnect'),
             ('rememberMeShown', 'true'),
@@ -77,6 +78,7 @@ class GarminAPI:
             ('consumeServiceTicket', 'false'),
             ('initialFocus', 'true'),
             ('embedWidget', 'false'),
+            ('socialEnabled','false'),
             ('generateExtraServiceTicket', 'true'),
             ('generateTwoExtraServiceTickets', 'true'),
             ('generateNoServiceTicket', 'false'),
@@ -95,6 +97,9 @@ class GarminAPI:
             ('rememberMyBrowserShown', 'false'),
             ('rememberMyBrowserChecked', 'false'),
         ]
+
+        logger.debug('params -> {}'.format(params))
+
         res = session.get(URL_LOGIN, params=params)
         if res.status_code != 200:
             raise Exception('No login form')
@@ -113,15 +118,19 @@ class GarminAPI:
           'password': password,
           '_csrf': csrf_token,
         }
+
         headers = {
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',  # noqa
-            'Accept-Language': 'fr,en-US;q=0.7,en;q=0.3',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',  # noqa
+            'Accept-Language': 'fr,en;q=0.9',
             'Accept-Encoding': 'gzip, deflate, br',
             'Origin': 'https://sso.garmin.com',
             'DNT': '1',
             'Connection': 'keep-alive',
             'Referer': res.url,
             'Upgrade-Insecure-Requests': '1',
+            'Sec-Ch-Ua': '" Not A;Brand";v="99", "Chromium";v="102", "Google Chrome";v="102"',
+            'Sec-Ch-Ua-Mobile': '?0',
+            'Sec-Ch-Ua-Platform': '"macOS"',
             'Sec-Fetch-Dest': 'iframe',
             'Sec-Fetch-Mode': 'navigate',
             'Sec-Fetch-Site': 'same-origin',
@@ -134,7 +143,7 @@ class GarminAPI:
         if not res.ok:
             if res.status_code == 429:
                 raise Exception('Authentication failed due to too many requests (429). Retry later...')  # noqa
-            raise Exception('Authentification failed.')
+            raise Exception('Authentification failed {}'.format(res.status_code))
 
         # Check we have sso guid in cookies
         if 'GARMIN-SSO-GUID' not in session.cookies:
